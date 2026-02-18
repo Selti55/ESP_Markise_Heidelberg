@@ -1,18 +1,8 @@
 # ESP32-Sender für Markisensteuerung
 
-Batteriebetriebener Sender mit 6 Tastern zur Ansteuerung einer Markise. Optimiert für geringsten Stromverbrauch durch Deep Sleep. **Betrieb mit 18650 Li-Ion Akku (3.7V - 4.2V) und integrierter Ladeschaltung.**
+Batteriebetriebener Sender mit 6 Tastern zur Ansteuerung einer Markise. **Die Taster wecken den ESP32 aus dem Deep Sleep.** Nach einer einstellbaren Inaktivitätszeit (kein Tastendruck) kehrt der ESP32 automatisch in den Deep Sleep zurück. Betrieb mit **18650 Li-Ion Akku** auf einem **LILYGO T-Energy-S3** Board mit integrierter Ladeschaltung.
 
-## 🔋 Anforderungen an das Sender-Board
-
-Da Sie einen **18650 Akku mit integrierter Ladeschaltung** wünschen, muss das Entwicklungsboard folgende Kriterien erfüllen:
-- Integrierter 18650 Batteriehalter
-- Integrierte Ladeschaltung (über USB-C oder Micro-USB)
-- Überspannungs- und Tiefentladeschutz
-- Effiziente Spannungsregelung für 3.3V (LDO oder Schaltregler)
-
-## 🎯 Hardware-Empfehlung mit 18650-Support
-
-### 🥇 Platz 1: **LILYGO T-Energy-S3** (ESP32-S3) ⭐ **Meine Top-Empfehlung**
+## 🎯 Gewählte Hardware: **LILYGO T-Energy-S3**
 
 | Eigenschaft | Beschreibung |
 |-------------|--------------|
@@ -22,117 +12,170 @@ Da Sie einen **18650 Akku mit integrierter Ladeschaltung** wünschen, muss das E
 | **Ladeschaltung** | HX6610S Laderegler, USB-C Ladung |
 | **Schutzfunktionen** | Verpolungsschutz, Überladung, Tiefentladung |
 | **Besonderheiten** | Battery-ADC an GPIO3 (Spannungsmessung), Qwiic/STEMMA Anschluss |
-| **Deep Sleep** | Sehr geringer Stromverbrauch |
-| **Preis** | ca. 17-20€ [citation:4] |
-| **Bezug** | Aliexpress, LilyGO Shop, Amazon |
+| **Deep Sleep** | Extrem geringer Stromverbrauch (ca. 5-20 µA) |
+| **Preis** | ca. 17-20€ |
 
-**Begründung:** Der T-Energy-S3 wurde speziell für 18650 Akkus entwickelt. Er hat einen fest integrierten Halter, keine wackeligen Kabel. Die Spannungsmessung ist bereits vorgesehen (GPIO3). Perfekt für Ihren Anwendungsfall [citation:4].
+## 🔌 GPIO-Belegung (LILYGO T-Energy-S3)
 
-### 🥈 Platz 2: **WEMOS/LOLIN ESP32 mit 18650 Shield** (Klassischer ESP32)
+| Taster | GPIO | Interne Pull-ups | Weck-Pin |
+|--------|------|------------------|----------|
+| Taster 1 | GPIO 1 | Ja (INPUT_PULLUP) | ✅ GPIO 1 |
+| Taster 2 | GPIO 2 | Ja | ✅ GPIO 2 |
+| Taster 3 | GPIO 4 | Ja | ✅ GPIO 4 |
+| Taster 4 | GPIO 5 | Ja | ✅ GPIO 5 |
+| Taster 5 | GPIO 6 | Ja | ✅ GPIO 6 |
+| Taster 6 | GPIO 7 | Ja | ✅ GPIO 7 |
+| **Battery ADC** | GPIO 3 | - | ❌ |
 
-| Eigenschaft | Beschreibung |
-|--------------|-------------|
-| **Modell** | WEMOS WiFi + Bluetooth Battery ESP32 |
-| **ESP32-Typ** | ESP32-WROOM-32 (klassisch) |
-| **Batteriehalter** | Integrierter 18650 Halter |
-| **Ladeschaltung** | Ja (0.5A Ladestrom, 1A Ausgang) |
-| **Schutzfunktionen** | Überladung, Tiefentladung |
-| **Besonderheiten** | Programmierbare LED an GPIO16, Power-Schalter, alle Pins gebroakt |
-| **Deep Sleep** | ca. 10-15 µA (mit Optimierung) |
-| **Preis** | ca. 12-15€ [citation:2][citation:3] |
-| **Bezug** | Amazon, AliExpress, Maker-Shops |
+**Wichtig:** Alle 6 Taster können als Weckquelle aus dem Deep Sleep verwendet werden! Der ESP32-S3 unterstützt das Aufwecken durch externe GPIOs (EXT1 Wakeup).
 
-**Begründung:** Günstige, bewährte Lösung. Das Board ist eigentlich ein klassisches ESP32 Dev Board mit einem 18650 Shield kombiniert. Funktioniert zuverlässig, ist aber etwas größer [citation:2][citation:3].
+## ⏱️ Gewünschtes Verhalten
 
-### 🥉 Platz 3: **OLIMEX ESP32-DevKit-LiPo** (Professionelle Lösung)
+- **Aufwecken:** Jeder der 6 Taster weckt den ESP32 aus dem Deep Sleep
+- **Aktivphase:** Nach dem Aufwachen bleibt der ESP32 wach und fragt die Taster ab
+- **Senden:** Bei jedem Tastendruck wird der Status per ESP-NOW gesendet
+- **Inaktivitäts-Timeout:** Nach **x Sekunden ohne Tastendruck** (konfigurierbar) geht der ESP32 zurück in den Deep Sleep
+- **Manueller Tiefschlaf:** Auch möglich durch langen Tastendruck (optional)
 
-| Eigenschaft | Beschreibung |
-|--------------|-------------|
-| **Modell** | OLIMEX ESP32-DevKit-LiPo |
-| **ESP32-Typ** | ESP32-WROOM-32 |
-| **Batterieanschluss** | JST PH 2.0 Anschluss für externen 18650 (separater Halter nötig) |
-| **Ladeschaltung** | BL4054B Charger (bis 500mA) |
-| **Schutzfunktionen** | Integrierter Schutz, optionale Batteriespannungsmessung |
-| **Besonderheiten** | Open Source Hardware, sehr gute Dokumentation |
-| **Deep Sleep** | ca. 20 µA |
-| **Preis** | ca. 25-30€ [citation:10] |
-| **Bezug** | Mouser, Farnell, OLIMEX Shop |
+## 🔧 Implementierung des Weckverhaltens
 
-**Begründung:** Hochwertige, professionelle Lösung. Allerdings ohne festen 18650-Halter - Sie bräuchten einen externen Batteriehalter mit JST-Stecker. Dafür exzellente Dokumentation und Support [citation:10].
+### Grundprinzip
 
-### Platz 4: **OLIMEX ESP32-S2-DevKit-LiPo-USB** (Modernere Alternative)
+Der ESP32-S3 kann aus dem Deep Sleep durch **externe GPIOs (EXT1)** aufgeweckt werden. Alle 6 Taster sind als Weckquelle konfiguriert.
 
-| Eigenschaft | Beschreibung |
-|--------------|-------------|
-| **Modell** | OLIMEX ESP32-S2-DevKit-LiPo-USB |
-| **ESP32-Typ** | ESP32-S2 (Single-Core, USB-OTG) |
-| **Batterieanschluss** | JST PH 2.0 Anschluss |
-| **Ladeschaltung** | Integrierter Li-Po Charger |
-| **Besonderheiten** | Native USB, sehr geringer Deep-Sleep-Strom (ca. 5-20 µA) |
-| **Preis** | ca. 25-30€ [citation:7][citation:9] |
-| **Bezug** | Mouser, Farnell, OLIMEX Shop |
+### Code-Struktur
 
-**Begründung:** Wenn Sie wirklich das Optimum an Stromsparen wollen, ist der ESP32-S2 die bessere Wahl als der klassische ESP32. Allerdings auch hier: Kein fester 18650-Halter [citation:9].
+```cpp
+#include <esp_now.h>
+#include <WiFi.h>
+#include "esp_sleep.h"
 
-## 📊 Vergleichstabelle
+// ============== KONFIGURATION ==============
+#define uS_TO_S_FACTOR 1000000ULL
+#define INACTIVITY_TIMEOUT 30  // x Sekunden ohne Tastendruck bis Deep Sleep
 
-| Board | ESP32 Typ | 18650 Halter | Lader | Deep Sleep | GPIOs | Preis |
-|-------|-----------|--------------|-------|------------|-------|-------|
-| **LILYGO T-Energy-S3** | S3 | **✅ Fest integriert** | ✅ | Sehr gut | 32 | €€ |
-| **WEMOS 18650 Board** | ESP32 | **✅ Fest integriert** | ✅ | Gut | Alle | € |
-| **OLIMEX DevKit-LiPo** | ESP32 | ❌ (JST) | ✅ | Sehr gut | Alle | €€€ |
-| **OLIMEX S2 DevKit** | S2 | ❌ (JST) | ✅ | **Hervorragend** | 27 | €€€ |
+// Taster GPIOs (alle als Weckquelle)
+const int buttonPins[6] = {1, 2, 4, 5, 6, 7};
+const uint64_t buttonBitMask = (1ULL << 1) | (1ULL << 2) | (1ULL << 4) | 
+                               (1ULL << 5) | (1ULL << 6) | (1ULL << 7);
 
-## 💡 Meine klare Kaufempfehlung
+// ESP-NOW Konfiguration
+uint8_t receiverMac[] = {0x34, 0x85, 0x18, 0x78, 0x92, 0xAC}; // Empfänger-MAC
 
-**Für Ihren Anwendungsfall: LILYGO T-Energy-S3**
+// ============== VARIABLEN ==============
+unsigned long lastButtonPress = 0;
+bool awakeFromSleep = false;
 
-Warum?
-1. ✅ **Fester 18650-Halter** - Kein Gepfriemel mit externen Batteriefächern
-2. ✅ **Integrierte Ladeschaltung** mit USB-C - Modern und schnell
-3. ✅ **ESP32-S3** - Moderner Chip, gute Stromsparoptionen
-4. ✅ **Battery-ADC vorhanden** - Sie können den Akkustand im Code auslesen (GPIO3)
-5. ✅ **Qwiic/STEMMA Anschluss** - Falls Sie später Sensoren erweitern wollen [citation:4]
+// ============== SETUP ==============
+void setup() {
+  Serial.begin(115200);
+  delay(100); // Für Serial Monitor
+  
+  // Aufwachgrund ermitteln
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  
+  switch(wakeup_reason) {
+    case ESP_SLEEP_WAKEUP_EXT1:
+      Serial.println("Aufgewacht durch Tastendruck");
+      awakeFromSleep = true;
+      break;
+    default:
+      Serial.println("Neustart (Power-On Reset)");
+      awakeFromSleep = false;
+  }
+  
+  // Taster konfigurieren
+  for (int i = 0; i < 6; i++) {
+    pinMode(buttonPins[i], INPUT_PULLUP);
+  }
+  
+  // ESP-NOW initialisieren
+  initESPNOW();
+  
+  // Letzten Tastendruck initialisieren
+  lastButtonPress = millis();
+  
+  // Sofortige Tasterabfrage nach Aufwachen
+  checkButtonsAndSend();
+}
 
-**Alternative für schmales Budget: WEMOS 18650 Board**
-- Günstiger, ebenfalls mit festem Halter
-- Aber: Älterer ESP32-Chip (etwas höherer Stromverbrauch) [citation:2][citation:3]
+// ============== LOOP ==============
+void loop() {
+  // Taster abfragen
+  checkButtonsAndSend();
+  
+  // Prüfen, ob Inaktivitäts-Timeout erreicht
+  if ((millis() - lastButtonPress) > (INACTIVITY_TIMEOUT * 1000)) {
+    Serial.println("Inaktivitäts-Timeout - gehe in Deep Sleep");
+    goToDeepSleep();
+  }
+  
+  delay(50); // Kleine Pause zur Entprellung
+}
 
-## 🔌 Anschluss der Taster am LILYGO T-Energy-S3
+// ============== FUNKTIONEN ==============
+void checkButtonsAndSend() {
+  for (int i = 0; i < 6; i++) {
+    if (digitalRead(buttonPins[i]) == LOW) { // Taster gedrückt (Pull-up, daher LOW)
+      delay(50); // Einfache Entprellung
+      if (digitalRead(buttonPins[i]) == LOW) {
+        // Taster bestätigt
+        Serial.print("Taster ");
+        Serial.print(i+1);
+        Serial.println(" gedrückt");
+        
+        // Nachricht senden
+        sendButtonStatus(i);
+        
+        // Warten bis Taster losgelassen (mit Timeout)
+        unsigned long pressStart = millis();
+        while (digitalRead(buttonPins[i]) == LOW) {
+          if ((millis() - pressStart) > 5000) { // Max 5 Sekunden gedrückt halten
+            break;
+          }
+          delay(10);
+        }
+        
+        // Letzten Tastendruck aktualisieren
+        lastButtonPress = millis();
+      }
+    }
+  }
+}
 
-| Taster | GPIO | Interne Pull-ups |
-|--------|------|------------------|
-| Taster 1 | GPIO 1 | Ja (über INPUT_PULLUP) |
-| Taster 2 | GPIO 2 | Ja |
-| Taster 3 | GPIO 4 | Ja |
-| Taster 4 | GPIO 5 | Ja |
-| Taster 5 | GPIO 6 | Ja |
-| Taster 6 | GPIO 7 | Ja |
-| **Battery ADC** | GPIO 3 | - |
+void sendButtonStatus(int buttonIndex) {
+  // Hier ESP-NOW Code einfügen
+  // Siehe Beispiel im vorherigen README
+}
 
-## ⚙️ Aktualisierte PlatformIO-Konfiguration für LILYGO T-Energy-S3
+void initESPNOW() {
+  WiFi.mode(WIFI_STA);
+  
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("ESP-NOW Init fehlgeschlagen");
+    return;
+  }
+  
+  // Peer konfigurieren etc.
+  // Siehe vorheriges README
+}
 
-```ini
-[env:lilygo_tenergy_s3]
-platform = espressif32
-board = esp32-s3-devkitc-1
-framework = arduino
-monitor_speed = 115200
+void goToDeepSleep() {
+  Serial.println("Aktiviere Deep Sleep...");
+  Serial.flush();
+  
+  // Alle 6 Taster als Weckquelle konfigurieren
+  // LOW = Taster gedrückt (wegen Pull-up)
+  esp_sleep_enable_ext1_wakeup(buttonBitMask, ESP_EXT1_WAKEUP_ALL_LOW);
+  
+  // In Deep Sleep gehen
+  esp_deep_sleep_start();
+}
 
-; Board-spezifische Einstellungen für LILYGO T-Energy-S3
-build_flags = 
-    -DCORE_DEBUG_LEVEL=0
-    -DBOARD_HAS_PSRAM
-    -DARDUINO_RUNNING_CORE=0
-    -DUSER_SETUP_LOADED
-    -DLILYGO_TENERGY_S3
-
-; Benötigte Bibliotheken
-lib_deps = 
-    espressif/ESP-NOW@^2.0.0
-    ; Für Batteriemessung (optional)
-    loboris/ESP32_Battery_ADC@^1.0.0
-
-; Partition-Schema für optimierte Speichernutzung
-board_build.partitions = default_16MB.csv
-board_upload.flash_size = 16MB
+// Batteriespannung auslesen (optional)
+float getBatteryVoltage() {
+  pinMode(3, INPUT_PULLDOWN);
+  int raw = analogRead(3);
+  float voltage = (raw / 4095.0) * 2.0 * 1.1 * 4.2; 
+  return voltage;
+}
