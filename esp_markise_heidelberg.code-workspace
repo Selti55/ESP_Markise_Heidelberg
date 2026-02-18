@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"name": "esp32_sender",
+			"path": "esp32_sender"
+		},
+		{
+			"name": "esp_receiver",
+			"path": "esp_receiver"
+		},
+		{
+			"name": "ESP_Markise_Heidelberg",
+			"path": "."
+		}
+	],
+	"settings": {}
+}
