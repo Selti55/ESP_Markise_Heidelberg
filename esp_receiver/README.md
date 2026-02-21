@@ -122,6 +122,8 @@ Im Hauptverzeichnis wird die Datei `platformio.ini` mit dem entsprechenden Inhal
 **3. Eigene MAC-Adresse ermitteln:**
 Der Code wird auf den ESP32 hochgeladen. Nach dem Öffnen des seriellen Monitors (115200 Baud) zeigt die Ausgabe "Eigene MAC-Adresse: XX:XX:XX:XX:XX:XX". Diese Adresse muss notiert werden, da sie für den Sender benötigt wird.
 
+receiver_MAC: FC:F5:C4:67:A8:E4
+
 **4. Sender-MAC-Adresse ermitteln und eintragen:**
 Der Sender muss seine MAC-Adresse ausgeben (siehe Sender-Dokumentation). Diese Adresse wird in `src/main.cpp` bei `senderMac[]` im Format {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF} eingetragen.
 

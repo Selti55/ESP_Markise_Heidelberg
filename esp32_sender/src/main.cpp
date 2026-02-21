@@ -49,7 +49,7 @@ const uint64_t buttonBitMask = (1ULL << 1) | (1ULL << 2) | (1ULL << 4) |
 // ============== ESP-NOW KONFIGURATION ==============
 // MAC-Adresse des Empfängers (HIER EINTRAGEN!)
 // Format: {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
-uint8_t receiverMac[] = {0x34, 0x85, 0x18, 0x78, 0x92, 0xAC}; // Beispiel-MAC
+uint8_t receiverMac[] = {0xFC, 0xF5, 0xC4, 0x67, 0xA8, 0xE4}; // Beispiel-MAC
 
 // Nachrichtenstruktur für ESP-NOW
 typedef struct struct_message {
