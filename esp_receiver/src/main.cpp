@@ -42,7 +42,7 @@ const int motorPairs[3][2] = {
 // ============== ESP-NOW KONFIGURATION ==============
 // MAC-Adresse des Senders (muss ausgelesen und hier eingetragen werden!)
 // Format: {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
-uint8_t senderMac[] = {0x34, 0x85, 0x18, 0x78, 0x92, 0xAC}; // Beispiel-MAC - BITTE ÄNDERN!
+uint8_t senderMac[] = {0x20, 0x6E, 0xF1, 0xA7, 0x4E, 0xB8}; // Sender-MAC 
 
 // Nachrichtenstruktur (muss mit Sender übereinstimmen)
 typedef struct struct_message {
@@ -267,3 +267,4 @@ void loop() {
   
   delay(10);  // Kleine Pause für CPU-Entlastung
 }
+
