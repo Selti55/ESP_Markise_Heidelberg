@@ -42,13 +42,13 @@ const uint64_t buttonBitMask =
     (1ULL << 1) | (1ULL << 2) | (1ULL << 4) |
     (1ULL << 5) | (1ULL << 6) | (1ULL << 7);
 
-// RGB-LED GPIOs (gemeinsame Anode: LOW = EIN, HIGH = AUS)
+// RGB-LED GPIOs (gemeinsame Kathode: HIGH = EIN, LOW = AUS)
 #define LED_RED_PIN   10
 #define LED_GREEN_PIN 11
 #define LED_BLUE_PIN  12
 
-// USB Detect (für Ladeerkennung, Board-spezifisch)
-#define USB_DETECT_PIN 15
+// USB Detect vorerst deaktiviert, bis echter Pin bekannt ist
+// #define USB_DETECT_PIN 15
 
 // Batterie-Messung (ADC-Pin, an VBAT-Teiler des T-Energy S3)
 #define BATTERY_ADC_PIN 3
@@ -83,10 +83,10 @@ void initLEDs() {
   pinMode(LED_GREEN_PIN, OUTPUT);
   pinMode(LED_BLUE_PIN, OUTPUT);
 
-  // Alle LEDs aus (gemeinsame Anode -> HIGH = AUS)
-  digitalWrite(LED_RED_PIN, HIGH);
-  digitalWrite(LED_GREEN_PIN, HIGH);
-  digitalWrite(LED_BLUE_PIN, HIGH);
+  // Alle LEDs aus (gemeinsame Kathode -> LOW = AUS)
+  digitalWrite(LED_RED_PIN, LOW);
+  digitalWrite(LED_GREEN_PIN, LOW);
+  digitalWrite(LED_BLUE_PIN, LOW);
 }
 
 /**
@@ -94,11 +94,13 @@ void initLEDs() {
  * @param red   true = Rot ein
  * @param green true = Grün ein
  * @param blue  true = Blau ein
+ *
+ * Common Cathode: HIGH = LED an, LOW = aus.
  */
 void setLEDColor(bool red, bool green, bool blue) {
-  digitalWrite(LED_RED_PIN,   red   ? LOW : HIGH);
-  digitalWrite(LED_GREEN_PIN, green ? LOW : HIGH);
-  digitalWrite(LED_BLUE_PIN,  blue  ? LOW : HIGH);
+  digitalWrite(LED_RED_PIN,   red   ? HIGH : LOW);
+  digitalWrite(LED_GREEN_PIN, green ? HIGH : LOW);
+  digitalWrite(LED_BLUE_PIN,  blue  ? HIGH : LOW);
 }
 
 // Aufwachen (kurzer Cyan-Puls)
@@ -195,12 +197,10 @@ float getBatteryVoltage() {
   delay(10);
   int raw = analogRead(BATTERY_ADC_PIN);
 
-  // Optional zur Kontrolle:
   Serial.print("ADC raw: ");
   Serial.println(raw);
 
-  // Kalibrierte Umrechnung von ADC-Rohwert in Volt:
-  const float K = 0.001667f;   // ggf. fein nachjustieren
+  const float K = 0.001667f;   // kalibrierter Faktor
   float voltage = raw * K;
   return voltage;
 }
@@ -211,23 +211,15 @@ float getBatteryVoltage() {
 void checkBatteryStatus() {
   batteryVoltage = getBatteryVoltage();
 
-  // USB-Detect (lädt?)
-  pinMode(USB_DETECT_PIN, INPUT);
-  isCharging = (digitalRead(USB_DETECT_PIN) == HIGH);
+  // USB-Erkennung aktuell nicht zuverlässig möglich -> immer false
+  isCharging = false;
 
   Serial.print("Batteriespannung: ");
   Serial.print(batteryVoltage, 2);
-  Serial.print(" V, USB: ");
-  Serial.println(isCharging ? "angeschlossen" : "nicht angeschlossen");
+  Serial.println(" V, USB: unbekannt (kein Pin definiert)");
 
-  // LED anhand des Status
-  if (isCharging) {
-    if (batteryVoltage > BATTERY_FULL_VOLTAGE) {
-      ledStatusBatteryFull();
-    } else {
-      ledStatusCharging();
-    }
-  } else if (batteryVoltage < BATTERY_MIN_VOLTAGE) {
+  // LED anhand Batteriestatus
+  if (batteryVoltage < BATTERY_MIN_VOLTAGE) {
     ledStatusBatteryCritical();
   }
 }

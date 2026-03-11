@@ -47,7 +47,7 @@ uint8_t senderMac[] = {0x20, 0x6E, 0xF1, 0xA7, 0x4E, 0xB8}; // Sender-MAC
 // Nachrichtenstruktur (muss mit Sender übereinstimmen)
 typedef struct struct_message {
   uint8_t buttonMask;      // Bit 0-5: Taster 1-6
-  float batteryVoltage;    // Batteriespannung des Senders
+  float   batteryVoltage;  // Batteriespannung des Senders
   uint8_t sequence;        // Sequenznummer
   uint8_t rssi;            // Signalstärke (vom Sender gemessen)
 } struct_message;
@@ -59,6 +59,9 @@ unsigned long lastReceiveTime = 0;
 uint8_t lastSequence = 0;
 bool senderPaired = false;
 
+// Merker für aktuellen Ausgangszustand (0 = aus, 1 = an)
+bool outputState[6] = {false, false, false, false, false, false};
+
 // ============== AUSGANGS FUNKTIONEN ==============
 /**
  * Initialisiert alle Ausgangs-Pins
@@ -68,6 +71,7 @@ void initOutputs() {
   for (int i = 0; i < 6; i++) {
     pinMode(outputPins[i], OUTPUT);
     digitalWrite(outputPins[i], LOW);
+    outputState[i] = false;
     Serial.printf("Ausgang %d (GPIO %d) initialisiert: %s\n", 
                   i+1, outputPins[i], outputNames[i]);
   }
@@ -87,14 +91,14 @@ void setOutputsFromMask(uint8_t buttonMask) {
   Serial.print(buttonMask, HEX);
   Serial.println(")");
   
-  // Prüfen auf ungültige Kombinationen (beide Taster eines Motors gleichzeitig)
   bool invalidCombination = false;
   
+  // Prüfen auf ungültige Kombinationen (beide Taster eines Motors gleichzeitig)
   for (int motor = 0; motor < 3; motor++) {
-    int leftPin = motorPairs[motor][0];
+    int leftPin  = motorPairs[motor][0];
     int rightPin = motorPairs[motor][1];
     
-    bool leftPressed = (buttonMask >> leftPin) & 1;
+    bool leftPressed  = (buttonMask >> leftPin)  & 1;
     bool rightPressed = (buttonMask >> rightPin) & 1;
     
     if (leftPressed && rightPressed) {
@@ -103,19 +107,19 @@ void setOutputsFromMask(uint8_t buttonMask) {
       invalidCombination = true;
       
       // Für diesen Motor beide Ausgänge ausschalten (Sicherheit)
-      digitalWrite(outputPins[leftPin], LOW);
+      outputState[leftPin]  = false;
+      outputState[rightPin] = false;
+      digitalWrite(outputPins[leftPin],  LOW);
       digitalWrite(outputPins[rightPin], LOW);
     }
   }
   
   // Normale Ausgangssetzung für gültige Kombinationen
   for (int i = 0; i < 6; i++) {
-    bool pinState = (buttonMask >> i) & 1;
-    
     // Prüfen ob dieser Pin Teil einer ungültigen Kombination war
     bool skip = false;
     for (int motor = 0; motor < 3; motor++) {
-      int leftPin = motorPairs[motor][0];
+      int leftPin  = motorPairs[motor][0];
       int rightPin = motorPairs[motor][1];
       
       if ((i == leftPin || i == rightPin) && 
@@ -126,14 +130,12 @@ void setOutputsFromMask(uint8_t buttonMask) {
     }
     
     if (!skip) {
+      bool pinState = (buttonMask >> i) & 1;
+      outputState[i] = pinState;                        // Zustand merken
       digitalWrite(outputPins[i], pinState ? HIGH : LOW);
-    }
-    
-    // Status ausgeben
-    if (pinState && !skip) {
-      Serial.printf("  → %s: EIN\n", outputNames[i]);
-    } else if (!pinState && !skip) {
-      Serial.printf("  → %s: AUS\n", outputNames[i]);
+
+      // Status ausgeben
+      Serial.printf("  → %s: %s\n", outputNames[i], pinState ? "EIN" : "AUS");
     }
   }
   
@@ -148,6 +150,7 @@ void setOutputsFromMask(uint8_t buttonMask) {
 void disableAllOutputs() {
   Serial.println("ALLE AUSGÄNGE AUSGESCHALTET (Timeout)");
   for (int i = 0; i < 6; i++) {
+    outputState[i] = false;
     digitalWrite(outputPins[i], LOW);
   }
 }
@@ -261,10 +264,13 @@ void loop() {
       timeoutActive = true;
     }
   } else {
-    // Timeout zurücksetzen wenn Pakete empfangen werden
-    // (keine Aktion nötig)
+    // Wenn wieder Pakete kommen, Timeout-Flag zurücksetzen
+    static bool timeoutActive = false;
+    if (timeoutActive) {
+      Serial.println("Pakete wieder empfangen, Timeout aufgehoben.");
+      timeoutActive = false;
+    }
   }
   
   delay(10);  // Kleine Pause für CPU-Entlastung
 }
-
