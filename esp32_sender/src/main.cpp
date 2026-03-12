@@ -32,7 +32,7 @@
 #define BATTERY_FULL_VOLTAGE 4.1  // Voll geladen
 
 // Wie oft bei gehaltenem Taster gesendet wird (Motor EIN solange Pakete kommen)
-#define HOLD_SEND_INTERVAL 100  // ms
+#define HOLD_SEND_INTERVAL 50  // ms
 
 // =================== GPIO DEFINITIONEN ===================
 
@@ -47,15 +47,12 @@ const uint64_t buttonBitMask =
 #define LED_GREEN_PIN 11
 #define LED_BLUE_PIN  12
 
-// USB Detect vorerst deaktiviert, bis echter Pin bekannt ist
-// #define USB_DETECT_PIN 15
-
 // Batterie-Messung (ADC-Pin, an VBAT-Teiler des T-Energy S3)
 #define BATTERY_ADC_PIN 3
 
 // =================== ESP-NOW KONFIGURATION ===================
 
-// MAC-Adresse des Empfängers (ESP32 WROOM) – HIER DEINE EMPFÄNGER-MAC EINTRAGEN!
+// MAC-Adresse des Empfängers (ESP32 WROOM)
 uint8_t receiverMac[] = {0xFC, 0xF5, 0xC4, 0x67, 0xA8, 0xE4};
 
 // Nachrichtenstruktur – muss exakt zur Empfängerseite passen
@@ -71,10 +68,10 @@ struct_message myData;
 // =================== GLOBALE VARIABLEN ===================
 
 unsigned long lastButtonPress = 0;  // Zeitpunkt des letzten erkkannten Tastendrucks
-bool awakeFromSleep = false;        // Flag: wurde aus Deep Sleep geweckt?
-bool isCharging = false;            // USB/Laden erkannt?
-float batteryVoltage = 0.0;         // letzte gemessene Batteriespannung
-uint8_t sequenceNumber = 0;         // laufende ESP-NOW-Sequenznummer
+bool   awakeFromSleep = false;
+bool   isCharging     = false;
+float  batteryVoltage = 0.0;
+uint8_t sequenceNumber = 0;
 
 // =================== LED-FUNKTIONEN ===================
 
@@ -91,10 +88,6 @@ void initLEDs() {
 
 /**
  * Setzt die RGB-LED Farbe
- * @param red   true = Rot ein
- * @param green true = Grün ein
- * @param blue  true = Blau ein
- *
  * Common Cathode: HIGH = LED an, LOW = aus.
  */
 void setLEDColor(bool red, bool green, bool blue) {
@@ -103,79 +96,48 @@ void setLEDColor(bool red, bool green, bool blue) {
   digitalWrite(LED_BLUE_PIN,  blue  ? HIGH : LOW);
 }
 
-// Aufwachen (kurzer Cyan-Puls)
+// Aufwachen (einmaliger kurzer Cyan-Puls – mit delay, aber nur im Setup)
 void ledStatusAwake() {
   setLEDColor(false, true, true);  // Cyan
   delay(100);
   setLEDColor(false, false, false);
 }
 
-// Taster OK (kurz Grün)
+// Taster OK – nur kurzer Blink ohne zusätzliche delay im Sendepfad
 void ledStatusButtonOK() {
   setLEDColor(false, true, false);  // Grün
-  delay(100);
-  setLEDColor(false, false, false);
+  // kein delay hier; Farbe bleibt bis zum nächsten LED-Update
 }
 
-// Mehrfach-Taster Fehler (Rot 3x)
+// Mehrfach-Taster Fehler – eine kurze rote Anzeige, aber ohne lange Blockade
 void ledStatusMultiButtonError() {
-  for (int i = 0; i < 3; i++) {
-    setLEDColor(true, false, false);
-    delay(200);
-    setLEDColor(false, false, false);
-    delay(100);
-  }
+  setLEDColor(true, false, false);  // Rot
+  // kein delay hier; Fehleranzeige bleibt kurz sichtbar
 }
 
-// Senden (Blau kurz)
+// Senden – nur eine blaue Markierung, kein delay mehr
 void ledStatusSending() {
   setLEDColor(false, false, true);  // Blau
-  delay(200);
+}
+
+// Sendebestätigung – z.B. wieder aus
+void ledStatusSendSuccess() {
   setLEDColor(false, false, false);
 }
 
-// Sendebestätigung (Grün 2x)
-void ledStatusSendSuccess() {
-  for (int i = 0; i < 2; i++) {
-    setLEDColor(false, true, false);
-    delay(100);
-    setLEDColor(false, false, false);
-    delay(80);
-  }
-}
-
-// Sendefehler (Rot 5x schnell)
+// Sendefehler – Rot kurz, aber ohne Blockade
 void ledStatusSendError() {
-  for (int i = 0; i < 5; i++) {
-    setLEDColor(true, false, false);
-    delay(50);
-    setLEDColor(false, false, false);
-    delay(50);
-  }
+  setLEDColor(true, false, false);
 }
 
-// Batterie kritisch (langsam Rot)
+// Batterie kritisch – hier darf es blockieren, passiert nur selten
 void ledStatusBatteryCritical() {
   setLEDColor(true, false, false);
   delay(2000);
   setLEDColor(false, false, false);
-  delay(2000);
 }
 
-// Batterie lädt (Orange pulsierend)
-void ledStatusCharging() {
-  setLEDColor(true, true, false);
-  delay(1000);
-  setLEDColor(false, false, false);
-  delay(1000);
-}
-
-// Batterie voll (Grün dauerhaft)
-void ledStatusBatteryFull() {
-  setLEDColor(false, true, false);
-}
-
-// Inaktiv-Timeout (Cyan 1 s)
+// Inaktiv-Timeout (Cyan 1 s) – nur beim Übergang in Sleep
 void ledStatusInactivityTimeout() {
   setLEDColor(false, true, true);
   delay(1000);
@@ -218,7 +180,6 @@ void checkBatteryStatus() {
   Serial.print(batteryVoltage, 2);
   Serial.println(" V, USB: unbekannt (kein Pin definiert)");
 
-  // LED anhand Batteriestatus
   if (batteryVoltage < BATTERY_MIN_VOLTAGE) {
     ledStatusBatteryCritical();
   }
@@ -289,13 +250,11 @@ void sendButtonStatus(uint8_t buttonMask) {
     return;
   }
 
-  // Nachricht füllen
   myData.buttonMask     = buttonMask;
   myData.batteryVoltage = batteryVoltage;
   myData.sequence       = sequenceNumber++;
   myData.rssi           = WiFi.RSSI();
 
-  // Senden
   ledStatusSending();
   esp_err_t result = esp_now_send(receiverMac, (uint8_t*)&myData, sizeof(myData));
 
@@ -318,7 +277,7 @@ uint8_t readButtons() {
   int pressedCount = 0;
 
   for (int i = 0; i < 6; i++) {
-    if (digitalRead(buttonPins[i]) == LOW) {  // Taster gegen GND, Pull-Up aktiv
+    if (digitalRead(buttonPins[i]) == LOW) {
       delay(DEBOUNCE_DELAY);
       if (digitalRead(buttonPins[i]) == LOW) {
         mask |= (1 << i);
@@ -339,7 +298,6 @@ uint8_t readButtons() {
 
 /**
  * Prüft Taster und sendet solange periodisch, wie EIN Taster gehalten wird.
- * Motorseite: Motor EIN solange Pakete kommen.
  */
 void checkButtonsAndSend() {
   uint8_t buttonMask = readButtons();
@@ -349,7 +307,6 @@ void checkButtonsAndSend() {
     if ((buttonMask & (buttonMask - 1)) != 0) {
       Serial.println("Mehrere Taster - keine Aktion");
     } else {
-      // Einzelner Taster
       int buttonIndex = 0;
       while (!(buttonMask & (1 << buttonIndex))) {
         buttonIndex++;
@@ -361,15 +318,14 @@ void checkButtonsAndSend() {
 
       ledStatusButtonOK();
 
-      // Solange dieser Taster gehalten wird, periodisch Status senden
       unsigned long pressStart = millis();
-      unsigned long lastSend = 0;
+      unsigned long lastSend   = 0;
 
       while ((readButtons() & (1 << buttonIndex)) &&
              ((millis() - pressStart) < BUTTON_HOLD_TIMEOUT)) {
         unsigned long now = millis();
         if (now - lastSend >= HOLD_SEND_INTERVAL) {
-          sendButtonStatus(1 << buttonIndex);  // nur dieser Taster
+          sendButtonStatus(1 << buttonIndex);
           lastSend = now;
         }
         delay(10);
@@ -391,17 +347,13 @@ void checkButtonsAndSend() {
 void goToDeepSleep() {
   Serial.println("Gehe in Deep Sleep...");
   ledStatusInactivityTimeout();
-  delay(1100);  // LED-Status sichtbar lassen
+  delay(1100);
 
   Serial.flush();
 
-  // Alle Taster als Wake-Quelle, LOW = gedrückt
   esp_sleep_enable_ext1_wakeup(buttonBitMask, ESP_EXT1_WAKEUP_ANY_LOW);
 
-  // LEDs sicher aus
   setLEDColor(false, false, false);
-
-  // Deep Sleep starten – ab hier läuft nichts mehr, bis Wake-Event
   esp_deep_sleep_start();
 }
 
@@ -412,10 +364,8 @@ void setup() {
   delay(100);
   Serial.println("\n\n=== ESP32-Sender Markisensteuerung ===");
 
-  // LEDs initialisieren
   initLEDs();
 
-  // Aufwachgrund bestimmen
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
 
   switch (wakeup_reason) {
@@ -424,7 +374,6 @@ void setup() {
       awakeFromSleep = true;
       ledStatusAwake();
 
-      // Welcher Taster hat geweckt?
       uint64_t wakeup_pin_mask = esp_sleep_get_ext1_wakeup_status();
       Serial.print("Geweckt von GPIO: ");
       for (int i = 0; i < 6; i++) {
@@ -448,19 +397,14 @@ void setup() {
       break;
   }
 
-  // Taster (Eingänge mit internem Pull-Up)
   for (int i = 0; i < 6; i++) {
     pinMode(buttonPins[i], INPUT_PULLUP);
     Serial.printf("Taster %d an GPIO %d\n", i + 1, buttonPins[i]);
   }
 
-  // Batterie initial prüfen
   checkBatteryStatus();
-
-  // ESP-NOW initialisieren
   initESPNOW();
 
-  // Inaktivitäts-Timer initialisieren
   lastButtonPress = millis();
 
   Serial.println("System bereit - warte auf Tastendruck...");
@@ -473,21 +417,18 @@ void setup() {
 // =================== LOOP ===================
 
 void loop() {
-  // Taster prüfen und ggf. ESP-NOW senden
   checkButtonsAndSend();
 
-  // Batterie alle 60 s prüfen
   static unsigned long lastBatteryCheck = 0;
   if (millis() - lastBatteryCheck > 60000) {
     checkBatteryStatus();
     lastBatteryCheck = millis();
   }
 
-  // Inaktivitäts-Timeout -> Deep Sleep
   if ((millis() - lastButtonPress) > (INACTIVITY_TIMEOUT * 1000UL)) {
     Serial.printf("Inaktivitäts-Timeout (%d Sekunden) erreicht\n", INACTIVITY_TIMEOUT);
     goToDeepSleep();
   }
 
-  delay(50);  // kleine Entlastung für CPU
+  delay(50);
 }

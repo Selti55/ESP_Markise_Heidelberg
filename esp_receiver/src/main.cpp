@@ -15,7 +15,7 @@
 // ============== KONFIGURATION ==============
 // Timeout: Wenn länger als diese Zeit kein Paket empfangen wird,
 // werden alle Ausgänge ausgeschaltet (Sicherheitsfunktion)
-#define RECEIVE_TIMEOUT 2000  // 2 Sekunden
+#define RECEIVE_TIMEOUT 200  // 200 Milli-Sekunden
 
 // ============== GPIO DEFINITIONEN ==============
 // Ausgänge für ULN2803 (entsprechen Tastern 1-6)
@@ -254,10 +254,10 @@ void setup() {
 
 // ============== LOOP ==============
 void loop() {
+  static bool timeoutActive = false;
   // Timeout-Überwachung: Wenn länger als RECEIVE_TIMEOUT kein Paket empfangen
   if (millis() - lastReceiveTime > RECEIVE_TIMEOUT) {
     // Nur einmal ausgeben beim Umschalten
-    static bool timeoutActive = false;
     if (!timeoutActive) {
       Serial.printf("TIMEOUT: Kein Paket für %d ms empfangen!\n", RECEIVE_TIMEOUT);
       disableAllOutputs();
@@ -265,7 +265,6 @@ void loop() {
     }
   } else {
     // Wenn wieder Pakete kommen, Timeout-Flag zurücksetzen
-    static bool timeoutActive = false;
     if (timeoutActive) {
       Serial.println("Pakete wieder empfangen, Timeout aufgehoben.");
       timeoutActive = false;
