@@ -2,14 +2,11 @@
  * ESP32-Sender für Markisensteuerung
  * LILYGO T-Energy-S3 mit 6 Tastern und RGB-LED
  *
- * Features:
- * - Deep Sleep mit Aufwachen durch Taster
- * - Inaktivitäts-Timeout (30 Sekunden)
- * - Motor EIN solange Taster gedrückt (periodische ESP-NOW-Pakete)
- * - Mehrfach-Taster-Erkennung (Mehrfachdruck wird verworfen)
- * - RGB-LED Statusanzeige
- * - Batterie-Überwachung mit Kalibrierung
- * - ESP-NOW Kommunikation zum Empfänger (ESP32 WROOM)
+ * Vereinfachter Stand:
+ * - Taster + ESP-NOW Senden wie im alten, funktionierenden Code
+ * - RGB-LED Status wie ursprünglich (inkl. Blau beim Senden)
+ * - Batterie-Überwachung nur noch als serielle Info, KEIN Einfluss
+ *   auf LED oder Sende-Logik
  */
 
 #include <esp_now.h>
@@ -26,10 +23,6 @@
 
 // Maximale Taster-Haltezeit (ms) – Sicherheitslimit
 #define BUTTON_HOLD_TIMEOUT 10000  // 10 s
-
-// Batterie-Referenzspannungen (für LED-Status, nicht für ADC)
-#define BATTERY_MIN_VOLTAGE 3.3   // Kritische Schwelle
-#define BATTERY_FULL_VOLTAGE 4.1  // Voll geladen
 
 // Wie oft bei gehaltenem Taster gesendet wird (Motor EIN solange Pakete kommen)
 #define HOLD_SEND_INTERVAL 50  // ms
@@ -58,10 +51,9 @@ uint8_t receiverMac[] = {0xFC, 0xF5, 0xC4, 0x67, 0xA8, 0xE4};
 // Nachrichtenstruktur – muss exakt zur Empfängerseite passen
 typedef struct struct_message {
   uint8_t buttonMask;      // Bit 0-5: Taster 1-6
-  float   batteryVoltage;  // Batteriespannung in Volt (kalibriert)
+  float   batteryVoltage;  // Batteriespannung in Volt (nur Info)
   uint8_t sequence;        // Sequenznummer
-  int16_t adcRaw;          // neu: Rohwert
-  // uint8_t rssi;            // Signalstärke (vom Sender gemessen)
+  int16_t adcRaw;          // Rohwert
 } struct_message;
 
 struct_message myData;
@@ -70,7 +62,6 @@ struct_message myData;
 
 unsigned long lastButtonPress = 0;  // Zeitpunkt des letzten erkkannten Tastendrucks
 bool   awakeFromSleep = false;
-bool   isCharging     = false;
 float  batteryVoltage = 0.0;
 uint8_t sequenceNumber = 0;
 
@@ -104,38 +95,31 @@ void ledStatusAwake() {
   setLEDColor(false, false, false);
 }
 
-// Taster OK – nur kurzer Blink ohne zusätzliche delay im Sendepfad
+// Taster OK – kurzer Grün-Blink
 void ledStatusButtonOK() {
   setLEDColor(false, true, false);  // Grün
   // kein delay hier; Farbe bleibt bis zum nächsten LED-Update
 }
 
-// Mehrfach-Taster Fehler – eine kurze rote Anzeige, aber ohne lange Blockade
+// Mehrfach-Taster Fehler – kurze rote Anzeige
 void ledStatusMultiButtonError() {
   setLEDColor(true, false, false);  // Rot
-  // kein delay hier; Fehleranzeige bleibt kurz sichtbar
+  // kein delay hier
 }
 
-// Senden – nur eine blaue Markierung, kein delay mehr
+// Senden – blaue LED während des Sendeversuchs
 void ledStatusSending() {
   setLEDColor(false, false, true);  // Blau
 }
 
-// Sendebestätigung – z.B. wieder aus
+// Sendebestätigung – wieder aus
 void ledStatusSendSuccess() {
   setLEDColor(false, false, false);
 }
 
-// Sendefehler – Rot kurz, aber ohne Blockade
+// Sendefehler – kurze rote Anzeige
 void ledStatusSendError() {
   setLEDColor(true, false, false);
-}
-
-// Batterie kritisch – hier darf es blockieren, passiert nur selten
-void ledStatusBatteryCritical() {
-  setLEDColor(true, false, false);
-  delay(2000);
-  setLEDColor(false, false, false);
 }
 
 // Inaktiv-Timeout (Cyan 1 s) – nur beim Übergang in Sleep
@@ -148,48 +132,39 @@ void ledStatusInactivityTimeout() {
 // =================== BATTERIE-FUNKTIONEN ===================
 
 /**
- * Misst die Batteriespannung über den Board-internen Teiler.
- *
- * Kalibrierung:
- *  - Gemessen am Akku: ~4,07 V
- *  - ADC raw: ~2442
- *  -> k = 4,07 / 2442 ≈ 0,001667 V pro ADC-Step
+ * Misst die Batteriespannung und gibt sie nur im Serial Monitor aus.
+ * KEINE LED- oder Logik-Reaktion, damit Senden nicht beeinflusst wird.
  */
 float getBatteryVoltage() {
   pinMode(BATTERY_ADC_PIN, INPUT_PULLDOWN);
   delay(10);
   int raw = analogRead(BATTERY_ADC_PIN);
 
+  // Rohwert direkt ausgeben, damit wir später sauber kalibrieren können.
   Serial.print("ADC raw: ");
   Serial.println(raw);
 
-  const float K = 0.001667f;   // kalibrierter Faktor
+  // Vorläufige Umrechnung (kann durch Lade-IC verfälscht sein)
+  const float K = 0.00172f;  // Volt pro ADC-Step (wird später neu kalibriert)
   float voltage = raw * K;
   return voltage;
 }
 
-/**
- * Prüft den Batteriestatus und aktualisiert globale Variablen + LED-Status.
- */
-void checkBatteryStatus() {
+void logBatteryStatus() {
   batteryVoltage = getBatteryVoltage();
 
-  // USB-Erkennung aktuell nicht zuverlässig möglich -> immer false
-  isCharging = false;
-
-  Serial.print("Batteriespannung: ");
+  Serial.print("Batteriespannung (nur Info): ");
   Serial.print(batteryVoltage, 2);
-  Serial.println(" V, USB: unbekannt (kein Pin definiert)");
-
-  if (batteryVoltage < BATTERY_MIN_VOLTAGE) {
-    ledStatusBatteryCritical();
-  }
+  Serial.println(" V");
 }
 
 // =================== ESP-NOW-FUNKTIONEN ===================
 
 /**
  * Callback nach Sendeversuch (ESP-NOW).
+ * LED-Verhalten wie im Original:
+ * - Erfolg  -> LED aus
+ * - Fehler  -> Rot (kurz)
  */
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
   Serial.print("Sendestatus: ");
@@ -252,10 +227,9 @@ void sendButtonStatus(uint8_t buttonMask) {
   }
 
   myData.buttonMask     = buttonMask;
-  myData.batteryVoltage = batteryVoltage;
-  myData.adcRaw         = analogRead(BATTERY_ADC_PIN);  // Rohwert mitgeben
+  myData.batteryVoltage = batteryVoltage;          // nur Info
+  myData.adcRaw         = analogRead(BATTERY_ADC_PIN);
   myData.sequence       = sequenceNumber++;
-  // myData.rssi           = (int8_t) WiFi.RSSI();
 
   ledStatusSending();
   esp_err_t result = esp_now_send(receiverMac, (uint8_t*)&myData, sizeof(myData));
@@ -300,6 +274,7 @@ uint8_t readButtons() {
 
 /**
  * Prüft Taster und sendet solange periodisch, wie EIN Taster gehalten wird.
+ * (Originale, bewährte Logik)
  */
 void checkButtonsAndSend() {
   uint8_t buttonMask = readButtons();
@@ -327,6 +302,7 @@ void checkButtonsAndSend() {
              ((millis() - pressStart) < BUTTON_HOLD_TIMEOUT)) {
         unsigned long now = millis();
         if (now - lastSend >= HOLD_SEND_INTERVAL) {
+          // KEIN Batterie-Check hier -> Senden nicht beeinflussen
           sendButtonStatus(1 << buttonIndex);
           lastSend = now;
         }
@@ -404,7 +380,9 @@ void setup() {
     Serial.printf("Taster %d an GPIO %d\n", i + 1, buttonPins[i]);
   }
 
-  checkBatteryStatus();
+  // Batterie nur zum Start loggen (ohne LED/Logik)
+  logBatteryStatus();
+
   initESPNOW();
 
   lastButtonPress = millis();
@@ -423,7 +401,8 @@ void loop() {
 
   static unsigned long lastBatteryCheck = 0;
   if (millis() - lastBatteryCheck > 60000) {
-    checkBatteryStatus();
+    // Batterie periodisch loggen (nur Info)
+    logBatteryStatus();
     lastBatteryCheck = millis();
   }
 
