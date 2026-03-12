@@ -60,7 +60,8 @@ typedef struct struct_message {
   uint8_t buttonMask;      // Bit 0-5: Taster 1-6
   float   batteryVoltage;  // Batteriespannung in Volt (kalibriert)
   uint8_t sequence;        // Sequenznummer
-  uint8_t rssi;            // Signalstärke (vom Sender gemessen)
+  int16_t adcRaw;          // neu: Rohwert
+  // uint8_t rssi;            // Signalstärke (vom Sender gemessen)
 } struct_message;
 
 struct_message myData;
@@ -252,8 +253,9 @@ void sendButtonStatus(uint8_t buttonMask) {
 
   myData.buttonMask     = buttonMask;
   myData.batteryVoltage = batteryVoltage;
+  myData.adcRaw         = analogRead(BATTERY_ADC_PIN);  // Rohwert mitgeben
   myData.sequence       = sequenceNumber++;
-  myData.rssi           = WiFi.RSSI();
+  // myData.rssi           = (int8_t) WiFi.RSSI();
 
   ledStatusSending();
   esp_err_t result = esp_now_send(receiverMac, (uint8_t*)&myData, sizeof(myData));

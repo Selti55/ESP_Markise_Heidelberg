@@ -49,7 +49,8 @@ typedef struct struct_message {
   uint8_t buttonMask;      // Bit 0-5: Taster 1-6
   float   batteryVoltage;  // Batteriespannung des Senders
   uint8_t sequence;        // Sequenznummer
-  uint8_t rssi;            // Signalstärke (vom Sender gemessen)
+  int16_t adcRaw;          // neu: Rohwert
+  // uint8_t rssi;            // Signalstärke (vom Sender gemessen)
 } struct_message;
 
 struct_message receivedData;
@@ -189,8 +190,9 @@ void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
   Serial.println("\n=== ESP-NOW Paket empfangen ===");
   Serial.printf("Bytes empfangen: %d\n", len);
   Serial.printf("Sequenznummer: %d\n", receivedData.sequence);
+  Serial.printf("ADC-Rohwert Sender: %d\n", receivedData.adcRaw);
   Serial.printf("Batteriespannung Sender: %.2fV\n", receivedData.batteryVoltage);
-  Serial.printf("Signalstärke (RSSI): %d dBm\n", receivedData.rssi);
+  // Serial.printf("Signalstärke (RSSI): %d dBm\n", receivedData.rssi);
   
   // Prüfen auf doppelte Pakete (gleiche Sequenznummer)
   if (receivedData.sequence == lastSequence) {
