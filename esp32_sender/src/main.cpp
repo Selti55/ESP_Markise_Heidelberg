@@ -2,15 +2,17 @@
  * ESP32-Sender für Markisensteuerung
  * LILYGO T-Energy-S3 mit 6 Tastern und RGB-LED
  *
- * Stand:
- * - Taster + ESP-NOW Senden wie im funktionierenden Code
- * - RGB-LED:
- *      - Taster OK: kurz GRÜN
- *      - Akku niedrig + Taster gehalten: blau-rot-blau pulsierend
- *      - sonst: keine Sende-LED
- * - Batterie-Überwachung:
- *      - nur Info im Serial Monitor
- *      - setzt ein batteryLow-Flag für die LED-Anzeige, beeinflusst keine Logik
+ * LED-Logik:
+ * - Batterie OK:
+ *     - Taster erkannt: kurz GRÜN
+ *     - Taster gehalten: GRÜN dauerhaft
+ * - Batterie LOW:
+ *     - Taster erkannt: kurz GRÜN
+ *     - Taster gehalten: BLAU/ROT im Wechsel (blinken) als "bitte laden"
+ *
+ * Batterie-Überwachung:
+ * - nur Info + batteryLow-Flag
+ * - KEIN Einfluss auf ESP-NOW-Logik
  */
 
 #include <esp_now.h>
@@ -30,6 +32,9 @@
 
 // Wie oft bei gehaltenem Taster gesendet wird (Motor EIN solange Pakete kommen)
 #define HOLD_SEND_INTERVAL 50  // ms
+
+// Batterie-Logik: Schwelle für "low" anhand ADC-Rohwert
+#define BATTERY_LOW_RAW_THRESHOLD 1500   // vorläufiger Wert, anpassbar
 
 // =================== GPIO DEFINITIONEN ===================
 
@@ -69,9 +74,8 @@ bool   awakeFromSleep = false;
 float  batteryVoltage = 0.0;
 uint8_t sequenceNumber = 0;
 
-// Akku-/Sende-Status
-bool batteryLow    = false;   // wird aus ADC-Rohwert abgeleitet
-bool sendingActive = false;   // true, solange ButtonMask != 0 gesendet wird
+// Akku-Status
+bool batteryLow = false;   // wird aus ADC-Rohwert abgeleitet
 
 // =================== LED-FUNKTIONEN ===================
 
@@ -106,13 +110,11 @@ void ledStatusAwake() {
 // Taster OK – kurzer Grün-Blink
 void ledStatusButtonOK() {
   setLEDColor(false, true, false);  // Grün
-  // kein delay hier; wird von weiterer Logik bzw. Puls-Update überschrieben
 }
 
 // Mehrfach-Taster Fehler – kurze rote Anzeige
 void ledStatusMultiButtonError() {
   setLEDColor(true, false, false);  // Rot
-  // kein delay hier
 }
 
 // Sendebestätigung – wieder aus
@@ -137,40 +139,35 @@ void ledStatusInactivityTimeout() {
 // =================== BATTERIE-FUNKTIONEN ===================
 
 /**
- * Misst die Batteriespannung und gibt sie nur im Serial Monitor aus.
- * KEINE direkte LED- oder Logik-Reaktion.
+ * Rechnet ADC-Rohwert in Spannung um.
  */
-float getBatteryVoltage() {
-  pinMode(BATTERY_ADC_PIN, INPUT_PULLDOWN);
-  delay(10);
-  int raw = analogRead(BATTERY_ADC_PIN);
-
-  // Rohwert ausgeben, damit wir später sauber kalibrieren können.
-  Serial.print("ADC raw: ");
-  Serial.println(raw);
-
-  // Vorläufige Umrechnung (kann durch Lade-IC verfälscht sein)
+float getBatteryVoltageFromRaw(int raw) {
   const float K = 0.00172f;  // Volt pro ADC-Step (wird später neu kalibriert)
-  float voltage = raw * K;
-  return voltage;
+  return raw * K;
 }
 
 /**
- * Loggt Spannung und setzt ein einfaches batteryLow-Flag anhand des ADC-Rohwerts.
- * Schwelle ist bewusst grob, da Kalibrierung später sauber gemacht wird.
+ * Loggt Spannung und setzt batteryLow-Flag anhand des ADC-Rohwerts.
+ * Nur EINE Messung, die für alles verwendet wird.
  */
 void logBatteryStatus() {
-  batteryVoltage = getBatteryVoltage();
+  pinMode(BATTERY_ADC_PIN, INPUT_PULLDOWN);
+  delay(10);
+
+  int raw = analogRead(BATTERY_ADC_PIN);
+
+  Serial.print("ADC raw: ");
+  Serial.println(raw);
+
+  batteryVoltage = getBatteryVoltageFromRaw(raw);
 
   Serial.print("Batteriespannung (nur Info): ");
   Serial.print(batteryVoltage, 2);
   Serial.println(" V");
 
-  int raw = analogRead(BATTERY_ADC_PIN);
+  // Schwelle: ADC-Rohwert < BATTERY_LOW_RAW_THRESHOLD => "low"
+  batteryLow = (raw < BATTERY_LOW_RAW_THRESHOLD);
 
-  // Grobe Schwelle: bei deinen Messungen lagen "komische" Werte um 800-1100.
-  // Hier nehmen wir >1500 als "ok", darunter "low".
-  batteryLow = (raw < 1500);
   Serial.print("batteryLow = ");
   Serial.println(batteryLow ? "true" : "false");
 }
@@ -179,7 +176,7 @@ void logBatteryStatus() {
 
 /**
  * Callback nach Sendeversuch (ESP-NOW).
- * - Erfolg  -> LED aus (Puls-Logik übernimmt ggf.)
+ * - Erfolg  -> LED aus
  * - Fehler  -> Rot (kurz)
  */
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
@@ -247,9 +244,6 @@ void sendButtonStatus(uint8_t buttonMask) {
   myData.adcRaw         = analogRead(BATTERY_ADC_PIN);
   myData.sequence       = sequenceNumber++;
 
-  // merken, ob gerade gehalten gesendet wird
-  sendingActive = (buttonMask != 0);
-
   esp_err_t result = esp_now_send(receiverMac, (uint8_t*)&myData, sizeof(myData));
 
   if (result == ESP_OK) {
@@ -292,7 +286,9 @@ uint8_t readButtons() {
 
 /**
  * Prüft Taster und sendet solange periodisch, wie EIN Taster gehalten wird.
- * (Originale, bewährte Logik)
+ * LED-Feedback während des Haltens:
+ * - Akku OK: grün dauerhaft
+ * - Akku LOW: blau/rot blinkend
  */
 void checkButtonsAndSend() {
   uint8_t buttonMask = readButtons();
@@ -311,66 +307,53 @@ void checkButtonsAndSend() {
       Serial.print(buttonIndex + 1);
       Serial.println(" gedrückt (einzeln)");
 
+      // kurzer grüner Blink als „Taster erkannt“
       ledStatusButtonOK();
+      delay(80);
+      setLEDColor(false, false, false);
 
       unsigned long pressStart = millis();
       unsigned long lastSend   = 0;
+      unsigned long lastBlink  = 0;
+      bool blinkState = false;
 
       while ((readButtons() & (1 << buttonIndex)) &&
              ((millis() - pressStart) < BUTTON_HOLD_TIMEOUT)) {
+
         unsigned long now = millis();
+
+        // 1) Senden in gewohnter Rate
         if (now - lastSend >= HOLD_SEND_INTERVAL) {
           sendButtonStatus(1 << buttonIndex);
           lastSend = now;
         }
+
+        // 2) LED-Anzeige während des Haltens
+        if (batteryLow) {
+          // Akku LOW: blau/rot im Wechsel blinken
+          if (now - lastBlink >= 250) {
+            lastBlink = now;
+            blinkState = !blinkState;
+            if (blinkState) {
+              setLEDColor(false, false, true);  // Blau
+            } else {
+              setLEDColor(true, false, false);  // Rot
+            }
+          }
+        } else {
+          // Akku OK: LED einfach dauerhaft grün
+          setLEDColor(false, true, false);
+        }
+
         delay(10);
       }
 
-      // Nach Loslassen (oder Timeout) optional ein "alles aus"-Paket senden
+      // Nach Loslassen (oder Timeout) -> LED aus, "alles aus"-Paket senden
+      setLEDColor(false, false, false);
       sendButtonStatus(0);
     }
 
     lastButtonPress = millis();
-  }
-}
-
-// =================== LED-PULS BEI AKKU NIEDRIG ===================
-
-/**
- * Wird aus loop() aufgerufen.
- * Wenn Akku niedrig UND Taster gehalten (sendingActive),
- * lässt die Status-LED blau-rot-blau pulsieren.
- */
-void updateLowBatterySendPulse() {
-  if (!sendingActive || !batteryLow) {
-    // Wenn kein Senden aktiv oder Akku ok -> nichts tun
-    return;
-  }
-
-  static unsigned long lastChange = 0;
-  static uint8_t phase = 0;
-
-  unsigned long now = millis();
-  const unsigned long step = 200;  // ms pro Phase
-
-  if (now - lastChange >= step) {
-    lastChange = now;
-    phase = (phase + 1) % 3;
-
-    switch (phase) {
-      case 0:
-        // Blau
-        setLEDColor(false, false, true);
-        break;
-      case 1:
-        // Rot
-        setLEDColor(true, false, false);
-        break;
-      case 2:
-        // Blau
-        setLEDColor(false, false, true);
-        break;
-    }
   }
 }
 
@@ -454,9 +437,6 @@ void setup() {
 // =================== LOOP ===================
 
 void loop() {
-  // Wenn Akku niedrig und Taster gehalten, LED blau-rot-blau pulsieren lassen
-  updateLowBatterySendPulse();
-
   checkButtonsAndSend();
 
   static unsigned long lastBatteryCheck = 0;
