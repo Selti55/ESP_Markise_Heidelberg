@@ -312,11 +312,15 @@ void checkButtonsAndSend() {
       delay(80);
       setLEDColor(false, false, false);
 
+      // Einmal senden (auch bei kurzem Tastendruck)
+      sendButtonStatus(1 << buttonIndex);
+
       unsigned long pressStart = millis();
-      unsigned long lastSend   = 0;
+      unsigned long lastSend   = millis();
       unsigned long lastBlink  = 0;
       bool blinkState = false;
 
+      // Solange der Taster gehalten wird, weiter senden (Motor EIN)
       while ((readButtons() & (1 << buttonIndex)) &&
              ((millis() - pressStart) < BUTTON_HOLD_TIMEOUT)) {
 
