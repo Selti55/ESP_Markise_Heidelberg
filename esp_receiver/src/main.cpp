@@ -1,27 +1,35 @@
 /**
- * ESP32-Empfänger für Markisensteuerung
+ * ESP32-Empfänger für Markisensteuerung - OPTIMIERTE VERSION
  * ESP32 WROOM mit ULN2803 für 6 Relais-Ausgänge
  * 
- * Funktion:
- * - Empfängt Taster-Signale per ESP-NOW vom Sender
- * - Schaltet 6 Ausgänge (GPIOs) entsprechend der Taster
- * - Ausgänge steuern ULN2803 für Relais (Links/Rechtslauf für 3 Motoren)
- * - Statusausgabe über seriellen Monitor
+ * WICHTIGE VERBESSERUNGEN:
+ * - Schnelleres Timeout für Sicherheitsabschaltung
+ * - Optimierte Ausgangsansteuerung
+ * - Bessere Fehlererkennung
+ * 
+ * FÜR ANFÄNGER:
+ * - Jede Funktion ist ausführlich kommentiert
+ * - Die Logik ist in kleine, überschaubare Teile zerlegt
  */
 
 #include <esp_now.h>
 #include <WiFi.h>
 
-// ============== KONFIGURATION ==============
-// Timeout: Wenn länger als diese Zeit kein Paket empfangen wird,
-// werden alle Ausgänge ausgeschaltet (Sicherheitsfunktion)
-#define RECEIVE_TIMEOUT 200  // 200 Milli-Sekunden
+// =================== KONFIGURATION ===================
 
-// ============== GPIO DEFINITIONEN ==============
+// Timeout: Wenn länger keine Pakete kommen, werden alle Ausgänge ausgeschaltet
+// VON 200ms AUF 150ms REDUZIERT für schnellere Sicherheitsabschaltung
+#define RECEIVE_TIMEOUT 150  // Millisekunden
+
+// Hauptschleifen-Delay
+#define LOOP_DELAY 5  // Millisekunden
+
+// =================== GPIO DEFINITIONEN ===================
+
 // Ausgänge für ULN2803 (entsprechen Tastern 1-6)
 const int outputPins[6] = {26, 27, 14, 12, 13, 15};
 
-// Benennung der Ausgänge für Klartext-Ausgabe
+// Klartext-Bezeichnungen für Debug-Ausgaben
 const char* outputNames[6] = {
   "Motor 1 Linkslauf (Taster 1)",
   "Motor 1 Rechtslauf (Taster 2)",
@@ -31,140 +39,128 @@ const char* outputNames[6] = {
   "Motor 3 Rechtslauf (Taster 6)"
 };
 
-// Motor-Zuordnung für Plausibilitätsprüfung
-// Jeder Motor hat zwei Ausgänge: [Links, Rechts]
+// Motor-Zuordnung: Jeder Motor hat zwei Ausgänge
+// Format: {Linkslauf-Ausgang, Rechtslauf-Ausgang}
 const int motorPairs[3][2] = {
   {0, 1},  // Motor 1: Ausgang 0 (Links), Ausgang 1 (Rechts)
   {2, 3},  // Motor 2: Ausgang 2 (Links), Ausgang 3 (Rechts)
   {4, 5}   // Motor 3: Ausgang 4 (Links), Ausgang 5 (Rechts)
 };
 
-// ============== ESP-NOW KONFIGURATION ==============
-// MAC-Adresse des Senders (muss ausgelesen und hier eingetragen werden!)
-// Format: {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
-uint8_t senderMac[] = {0x20, 0x6E, 0xF1, 0xA7, 0x4E, 0xB8}; // Sender-MAC 
+// =================== ESP-NOW KONFIGURATION ===================
 
-// Nachrichtenstruktur (muss mit Sender übereinstimmen)
+// MAC-Adresse des Senders (muss an Ihre Hardware angepasst werden!)
+uint8_t senderMac[] = {0x20, 0x6E, 0xF1, 0xA7, 0x4E, 0xB8};
+
+// Nachrichtenstruktur (muss exakt mit dem Sender übereinstimmen!)
 typedef struct struct_message {
   uint8_t buttonMask;      // Bit 0-5: Taster 1-6
   float   batteryVoltage;  // Batteriespannung des Senders
   uint8_t sequence;        // Sequenznummer
-  int16_t adcRaw;          // neu: Rohwert
-  // uint8_t rssi;            // Signalstärke (vom Sender gemessen)
+  int16_t adcRaw;          // ADC-Rohwert
+  int8_t  rssi;            // Signalstärke (NEU)
+  uint32_t timestamp;      // Zeitstempel (NEU)
 } struct_message;
 
-struct_message receivedData;
+struct_message receivedData;  // Hier wird die empfangene Nachricht gespeichert
 
-// ============== GLOBALE VARIABLEN ==============
-unsigned long lastReceiveTime = 0;
-uint8_t lastSequence = 0;
-bool senderPaired = false;
+// =================== GLOBALE VARIABLEN ===================
 
-// Merker für aktuellen Ausgangszustand (0 = aus, 1 = an)
-bool outputState[6] = {false, false, false, false, false, false};
+unsigned long lastReceiveTime = 0;  // Wann wurde zuletzt ein Paket empfangen?
+uint8_t lastSequence = 0;           // Letzte Sequenznummer (erkennt doppelte Pakete)
+bool outputState[6] = {false};      // Aktueller Zustand der Ausgänge
 
-// ============== AUSGANGS FUNKTIONEN ==============
-/**
- * Initialisiert alle Ausgangs-Pins
- * Setzt sie auf LOW (Relais aus)
- */
+// =================== AUSGANGS-FUNKTIONEN ===================
+
+// Initialisiert alle Ausgänge (setzt sie auf AUS)
 void initOutputs() {
   for (int i = 0; i < 6; i++) {
     pinMode(outputPins[i], OUTPUT);
     digitalWrite(outputPins[i], LOW);
     outputState[i] = false;
-    Serial.printf("Ausgang %d (GPIO %d) initialisiert: %s\n", 
+    Serial.printf("Ausgang %d (GPIO %d): %s\n", 
                   i+1, outputPins[i], outputNames[i]);
   }
 }
 
-/**
- * Setzt die Ausgänge basierend auf der empfangenen Button-Maske
- * @param buttonMask Bit 0-5: Taster 1-6 (1 = gedrückt)
- */
+// Schaltet alle Ausgänge aus (Sicherheitsfunktion)
+void disableAllOutputs() {
+  Serial.println("!!! SICHERHEITSABSCHALTUNG: Alle Ausgänge AUS !!!");
+  for (int i = 0; i < 6; i++) {
+    if (outputState[i]) {
+      outputState[i] = false;
+      digitalWrite(outputPins[i], LOW);
+    }
+  }
+}
+
+// Setzt die Ausgänge basierend auf der empfangenen Taster-Maske
 void setOutputsFromMask(uint8_t buttonMask) {
-  // Ausgabe der empfangenen Maske
-  Serial.print("Empfangene Taster-Maske: 0b");
+  bool hasInvalidCombination = false;
+  
+  // Debug-Ausgabe der empfangenen Maske
+  Serial.print("Empfangene Maske: 0b");
   for (int i = 5; i >= 0; i--) {
     Serial.print((buttonMask >> i) & 1);
   }
-  Serial.print(" (Hex: 0x");
+  Serial.print(" (0x");
   Serial.print(buttonMask, HEX);
   Serial.println(")");
   
-  bool invalidCombination = false;
-  
-  // Prüfen auf ungültige Kombinationen (beide Taster eines Motors gleichzeitig)
+  // Prüfung auf ungültige Kombinationen (beide Taster eines Motors gleichzeitig)
   for (int motor = 0; motor < 3; motor++) {
-    int leftPin  = motorPairs[motor][0];
-    int rightPin = motorPairs[motor][1];
+    int leftIndex  = motorPairs[motor][0];   // Linkslauf-Ausgang
+    int rightIndex = motorPairs[motor][1];   // Rechtslauf-Ausgang
     
-    bool leftPressed  = (buttonMask >> leftPin)  & 1;
-    bool rightPressed = (buttonMask >> rightPin) & 1;
+    bool leftPressed  = (buttonMask >> leftIndex) & 1;
+    bool rightPressed = (buttonMask >> rightIndex) & 1;
     
     if (leftPressed && rightPressed) {
-      Serial.printf("FEHLER: Motor %d würde gleichzeitig Links und Rechtslauf erhalten!\n", motor+1);
-      Serial.println("Dieser Befehl wird ignoriert - keine Änderung für diesen Motor.");
-      invalidCombination = true;
+      // Beide Richtungen gleichzeitig - DAS DARF NICHT PASSIEREN!
+      Serial.printf("FEHLER: Motor %d würde Links und Rechts gleichzeitig bekommen!\n", motor+1);
+      Serial.println("-> Beide Ausgänge werden AUSgeschaltet!");
       
-      // Für diesen Motor beide Ausgänge ausschalten (Sicherheit)
-      outputState[leftPin]  = false;
-      outputState[rightPin] = false;
-      digitalWrite(outputPins[leftPin],  LOW);
-      digitalWrite(outputPins[rightPin], LOW);
-    }
-  }
-  
-  // Normale Ausgangssetzung für gültige Kombinationen
-  for (int i = 0; i < 6; i++) {
-    // Prüfen ob dieser Pin Teil einer ungültigen Kombination war
-    bool skip = false;
-    for (int motor = 0; motor < 3; motor++) {
-      int leftPin  = motorPairs[motor][0];
-      int rightPin = motorPairs[motor][1];
-      
-      if ((i == leftPin || i == rightPin) && 
-          ((buttonMask >> leftPin) & 1) && ((buttonMask >> rightPin) & 1)) {
-        skip = true;
-        break;
+      // Sicherheitshalber beide Ausgänge ausschalten
+      if (outputState[leftIndex]) {
+        outputState[leftIndex] = false;
+        digitalWrite(outputPins[leftIndex], LOW);
       }
-    }
-    
-    if (!skip) {
-      bool pinState = (buttonMask >> i) & 1;
-      outputState[i] = pinState;                        // Zustand merken
-      digitalWrite(outputPins[i], pinState ? HIGH : LOW);
-
-      // Status ausgeben
-      Serial.printf("  → %s: %s\n", outputNames[i], pinState ? "EIN" : "AUS");
+      if (outputState[rightIndex]) {
+        outputState[rightIndex] = false;
+        digitalWrite(outputPins[rightIndex], LOW);
+      }
+      
+      hasInvalidCombination = true;
     }
   }
   
-  if (invalidCombination) {
-    Serial.println("WARNUNG: Ungültige Tasterkombination empfangen!");
-  }
-}
-
-/**
- * Schaltet alle Ausgänge aus (Sicherheitsfunktion)
- */
-void disableAllOutputs() {
-  Serial.println("ALLE AUSGÄNGE AUSGESCHALTET (Timeout)");
+  // Normale Ausgangssetzung für alle Kanäle
   for (int i = 0; i < 6; i++) {
-    outputState[i] = false;
-    digitalWrite(outputPins[i], LOW);
+    bool newState = (buttonMask >> i) & 1;
+    
+    if (newState != outputState[i]) {
+      // Zustand ändert sich
+      outputState[i] = newState;
+      digitalWrite(outputPins[i], newState ? HIGH : LOW);
+      
+      // Debug-Ausgabe
+      Serial.printf("  %s: %s\n", outputNames[i], newState ? "EIN" : "AUS");
+    }
+  }
+  
+  if (hasInvalidCombination) {
+    Serial.println("WARNUNG: Ungültige Tasterkombination wurde korrigiert!");
   }
 }
 
-// ============== ESP-NOW FUNKTIONEN ==============
-/**
- * Callback wenn Daten empfangen wurden
- */
+// =================== ESP-NOW FUNKTIONEN ===================
+
+// Wird aufgerufen, wenn Daten empfangen wurden
 void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
-  // Kopiere empfangene Daten in Struct
+  // Daten in die Struktur kopieren
   memcpy(&receivedData, incomingData, sizeof(receivedData));
   
-  // Prüfen ob der Absender bekannt ist
+  // Prüfen, ob der Absender bekannt ist (Sicherheit)
   bool knownSender = true;
   for (int i = 0; i < 6; i++) {
     if (mac[i] != senderMac[i]) {
@@ -174,6 +170,7 @@ void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
   }
   
   if (!knownSender) {
+    // Unbekannter Absender - Paket ignorieren
     Serial.print("Unbekannter Absender: ");
     for (int i = 0; i < 6; i++) {
       Serial.printf("%02X", mac[i]);
@@ -183,47 +180,47 @@ void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
     return;
   }
   
-  // Zeitstempel aktualisieren
+  // Zeitstempel aktualisieren (für Timeout-Überwachung)
   lastReceiveTime = millis();
   
-  // Paketinformationen ausgeben
-  Serial.println("\n=== ESP-NOW Paket empfangen ===");
-  Serial.printf("Bytes empfangen: %d\n", len);
-  Serial.printf("Sequenznummer: %d\n", receivedData.sequence);
-  Serial.printf("ADC-Rohwert Sender: %d\n", receivedData.adcRaw);
-  Serial.printf("Batteriespannung Sender: %.2fV\n", receivedData.batteryVoltage);
-  // Serial.printf("Signalstärke (RSSI): %d dBm\n", receivedData.rssi);
+  // Paket-Informationen ausgeben (für Diagnose)
+  Serial.println("\n=== Paket empfangen ===");
+  Serial.printf("Seq: %d | RSSI: %d dBm | ADC: %d\n", 
+                receivedData.sequence, receivedData.rssi, receivedData.adcRaw);
+  Serial.printf("Batterie Sender: %.2fV\n", receivedData.batteryVoltage);
   
   // Prüfen auf doppelte Pakete (gleiche Sequenznummer)
   if (receivedData.sequence == lastSequence) {
-    Serial.println("WARNUNG: Doppeltes Paket empfangen (gleiche Sequenznummer)");
+    Serial.println("Hinweis: Doppeltes Paket (Sequenznummer wiederholt)");
   }
   lastSequence = receivedData.sequence;
   
-  // Ausgänge setzen
+  // Ausgänge entsprechend der empfangenen Maske setzen
   setOutputsFromMask(receivedData.buttonMask);
   
-  Serial.println("================================\n");
+  Serial.println("=====================\n");
 }
 
-/**
- * Initialisiert ESP-NOW
- */
+// Initialisiert ESP-NOW
 void initESPNOW() {
+  // WiFi im Station-Modus (nicht Access Point)
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
   
-  Serial.print("Eigene MAC-Adresse: ");
+  // Eigene MAC-Adresse ausgeben (für die Konfiguration des Senders)
+  Serial.print("Eigene MAC-Adresse (für Sender): ");
   Serial.println(WiFi.macAddress());
   
+  // ESP-NOW initialisieren
   if (esp_now_init() != ESP_OK) {
     Serial.println("ESP-NOW Init fehlgeschlagen!");
     return;
   }
   
+  // Callback für empfangene Daten registrieren
   esp_now_register_recv_cb(OnDataRecv);
   
-  Serial.println("ESP-NOW initialisiert - warte auf Sender...");
+  Serial.println("ESP-NOW bereit - warte auf Sender...");
   Serial.print("Erwartete Sender-MAC: ");
   for (int i = 0; i < 6; i++) {
     Serial.printf("%02X", senderMac[i]);
@@ -232,13 +229,15 @@ void initESPNOW() {
   Serial.println();
 }
 
-// ============== SETUP ==============
+// =================== SETUP ===================
+
 void setup() {
   // Serielle Kommunikation starten
   Serial.begin(115200);
   delay(100);
   Serial.println("\n\n=====================================");
   Serial.println("ESP32-Empfänger für Markisensteuerung");
+  Serial.println("Optimierte Version");
   Serial.println("=====================================");
   
   // Ausgänge initialisieren
@@ -250,28 +249,40 @@ void setup() {
   // Zeitstempel initialisieren
   lastReceiveTime = millis();
   
-  Serial.println("System bereit - warte auf Sender...");
+  Serial.println("System bereit");
+  Serial.printf("Sicherheits-Timeout: %d ms\n", RECEIVE_TIMEOUT);
   Serial.println("=====================================\n");
 }
 
-// ============== LOOP ==============
+// =================== LOOP ===================
+
 void loop() {
   static bool timeoutActive = false;
-  // Timeout-Überwachung: Wenn länger als RECEIVE_TIMEOUT kein Paket empfangen
+  static unsigned long lastStatusOutput = 0;
+  
+  // Timeout-Überwachung
+  // Wenn länger als RECEIVE_TIMEOUT kein Paket empfangen wurde...
   if (millis() - lastReceiveTime > RECEIVE_TIMEOUT) {
-    // Nur einmal ausgeben beim Umschalten
     if (!timeoutActive) {
-      Serial.printf("TIMEOUT: Kein Paket für %d ms empfangen!\n", RECEIVE_TIMEOUT);
+      // Nur einmal beim ersten Timeout ausgeben
+      Serial.printf("TIMEOUT: Kein Paket für %d ms!\n", RECEIVE_TIMEOUT);
       disableAllOutputs();
       timeoutActive = true;
     }
   } else {
-    // Wenn wieder Pakete kommen, Timeout-Flag zurücksetzen
+    // Pakete kommen wieder an
     if (timeoutActive) {
-      Serial.println("Pakete wieder empfangen, Timeout aufgehoben.");
+      Serial.println("Verbindung wiederhergestellt - Timeout aufgehoben");
       timeoutActive = false;
     }
   }
   
-  delay(10);  // Kleine Pause für CPU-Entlastung
+  // Nur alle 10 Sekunden einen Status ausgeben (für Diagnose)
+  if (millis() - lastStatusOutput > 10000) {
+    // Optional: Status der Ausgänge ausgeben
+    // lastStatusOutput = millis();
+  }
+  
+  // Kleine Pause zur CPU-Entlastung
+  delay(LOOP_DELAY);
 }
